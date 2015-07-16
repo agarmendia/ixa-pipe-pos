@@ -186,14 +186,25 @@ public class CLI {
         .getBoolean("multiwords"));
     final String dictag = Boolean.toString(this.parsedArguments
         .getBoolean("dictag"));
+    final String lang = this.parsedArguments.getString("lang");
+    final Boolean serverMode = this.parsedArguments.getBoolean("server");
     BufferedReader breader = null;
     BufferedWriter bwriter = null;
     breader = new BufferedReader(new InputStreamReader(System.in, "UTF-8"));
     bwriter = new BufferedWriter(new OutputStreamWriter(System.out, "UTF-8"));
+    Properties properties = setAnnotateProperties(model, beamSize,
+        multiwords, dictag);
+    if (serverMode) {
+      properties = addLangProperty(properties, lang);
+      annotateDoc_Server(properties, model, breader, bwriter);
+    } else {
+      annotateDoc_noServer(properties, model, lang, breader, bwriter);
+    }
+  }
 
+
+  private void annotateDoc_noServer( Properties properties, String model, String lang, BufferedReader breader, BufferedWriter bwriter) throws IOException, JDOMException {
     final KAFDocument kaf = KAFDocument.createFromStream(breader);
-    // language
-    String lang;
     if (this.parsedArguments.getString("language") != null) {
       lang = this.parsedArguments.getString("language");
       if (!kaf.getLang().equalsIgnoreCase(lang)) {
@@ -203,9 +214,9 @@ public class CLI {
     } else {
       lang = kaf.getLang();
     }
-    final Properties properties = setAnnotateProperties(model, lang, beamSize,
-        multiwords, dictag);
+    properties = addLangProperty(properties, lang);
     final Annotate annotator = new Annotate(properties);
+
     if (this.parsedArguments.getBoolean("nokaf")) {
       bwriter.write(annotator.annotatePOSToCoNLL(kaf));
     } else {
@@ -219,6 +230,31 @@ public class CLI {
     }
     bwriter.close();
     breader.close();
+  }
+
+
+  private void annotateDoc_Server( Properties properties, String model, BufferedReader breader, BufferedWriter bwriter) throws IOException { 
+
+    final Annotate annotator = new Annotate(properties);
+     while (true) {
+
+      final KAFDocument kaf = KAFDocReader.readKaf(breader);
+      //final KAFDocument kaf = KAFDocument.createFromStream(breader);
+      if (this.parsedArguments.getBoolean("nokaf")) {
+        bwriter.write(annotator.annotatePOSToCoNLL(kaf));
+      } else {
+        final KAFDocument.LinguisticProcessor newLp = kaf.addLinguisticProcessor(
+            "terms", "ixa-pipe-pos-" + Files.getNameWithoutExtension(model),
+            this.version + "-" + this.commit);
+        newLp.setBeginTimestamp();
+        annotator.annotatePOSToKAF(kaf);
+        newLp.setEndTimestamp();
+        bwriter.write(kaf.toString());
+        bwriter.write("[IXAdaemon]EOD");
+        bwriter.write("\n");
+        bwriter.flush();
+      }
+    }
   }
 
   /**
@@ -245,6 +281,10 @@ public class CLI {
     this.annotateParser.addArgument("-d", "--dictag")
         .action(Arguments.storeTrue())
         .help("Post process POS tagger output with a monosemic dictionary.\n");
+    this.annotateParser.addArgument("-server", "--server")
+        .required(false)
+        .action(Arguments.storeTrue())
+        .help("Choose if you want to run nerc as a server");
   }
 
   /**
@@ -360,14 +400,17 @@ public class CLI {
    * @return the properties object
    */
   private Properties setAnnotateProperties(final String model,
-      final String language, final String beamSize, final String multiwords,
-      final String dictag) {
+      final String beamSize, final String multiwords, final String dictag) {
     final Properties annotateProperties = new Properties();
     annotateProperties.setProperty("model", model);
-    annotateProperties.setProperty("language", language);
     annotateProperties.setProperty("beamSize", beamSize);
     annotateProperties.setProperty("multiwords", multiwords);
     annotateProperties.setProperty("dictag", dictag);
+    return annotateProperties;
+  }
+
+  private Properties addLangProperty(Properties annotateProperties, String language){
+    annotateProperties.setProperty("language", language);
     return annotateProperties;
   }
 
